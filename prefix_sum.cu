@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <cuda_runtime.h>
 #include <time.h>
 
@@ -35,10 +36,23 @@ void verifyArray(int * arr, size_t n)
     }
 }
 
-int main() {
-    const int N = 1000000000;
-    const int NUM_REQUESTS = 4;
-    const int NUM_STREAMS = 4;
+int main(int argc, char *argv[]) {
+    // Check command-line arguments
+    if (argc != 4) {
+        printf("Usage: %s <N> <NUM_REQUESTS> <NUM_STREAMS>\n", argv[0]);
+        printf("  N             - Array size\n");
+        printf("  NUM_REQUESTS  - Number of arrays to process\n");
+        printf("  NUM_STREAMS   - Number of CUDA streams\n");
+        return 1;
+    }
+    
+    // Parse command-line arguments
+    const int N = atoi(argv[1]);
+    const int NUM_REQUESTS = atoi(argv[2]);
+    const int NUM_STREAMS = atoi(argv[3]);
+    
+    printf("Running with N=%d, NUM_REQUESTS=%d, NUM_STREAMS=%d\n\n", N, NUM_REQUESTS, NUM_STREAMS);
+    
     const size_t bytes = N * sizeof(int);
     cudaStream_t streams[NUM_STREAMS];
 
@@ -88,11 +102,12 @@ int main() {
         cudaFree(d_arrays[iter]);
         free(h_arrays[iter]);
     } 
-    free(h_arrays);  
-    free(d_arrays);
     clock_t verify_end = clock();
     double verifyTime = ((double)(verify_end - verify_start)) / CLOCKS_PER_SEC * 1000.0;
     printf("Verification time: %.3f ms\n", verifyTime);
+    
+    free(h_arrays);  
+    free(d_arrays);
 
     for (int iter = 0; iter < NUM_STREAMS; iter++){
         cudaStreamDestroy(streams[iter]);
