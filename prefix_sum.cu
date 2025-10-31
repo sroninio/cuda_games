@@ -36,13 +36,28 @@ void verifyArray(int * arr, size_t n)
     }
 }
 
+void solve(int N, cudaStream_t * pstream, int * d_array)
+{
+    for (int solved_block_size = 1; solved_block_size < N; solved_block_size *= 2) {
+        int threadsPerBlock = 256;
+        int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
+        if (pstream) {
+            unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, *pstream>>>(d_array, N, solved_block_size);
+        } else {
+            unite_step_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_array, N, solved_block_size); 
+        }
+    }    
+}
+
 int main(int argc, char *argv[]) {
     // Check command-line arguments
-    if (argc != 4) {
-        printf("Usage: %s <N> <NUM_REQUESTS> <NUM_STREAMS>\n", argv[0]);
+    if (argc != 6) {
+        printf("Usage: %s <N> <NUM_REQUESTS> <NUM_STREAMS> <IF_CUDA_GRAPH> <N_ITERATIONS>\n", argv[0]);
         printf("  N             - Array size\n");
         printf("  NUM_REQUESTS  - Number of arrays to process\n");
         printf("  NUM_STREAMS   - Number of CUDA streams\n");
+        printf("  IF_CUDA_GRAPH - Use CUDA graphs (0=no, 1=yes)\n");
+        printf("  N_ITERATIONS  - Number of times to repeat the kernel execution\n");
         return 1;
     }
     
@@ -50,8 +65,15 @@ int main(int argc, char *argv[]) {
     const int N = atoi(argv[1]);
     const int NUM_REQUESTS = atoi(argv[2]);
     const int NUM_STREAMS = atoi(argv[3]);
+    const int IF_CUDA_GRAPH = atoi(argv[4]);
+    const int N_ITERATIONS = atoi(argv[5]);
+
+    printf("Running with N=%d, NUM_REQUESTS=%d, NUM_STREAMS=%d, IF_CUDA_GRAPH=%d, N_ITERATIONS=%d\n\n", 
+        N, NUM_REQUESTS, NUM_STREAMS, IF_CUDA_GRAPH, N_ITERATIONS);
     
-    printf("Running with N=%d, NUM_REQUESTS=%d, NUM_STREAMS=%d\n\n", N, NUM_REQUESTS, NUM_STREAMS);
+    cudaGraphExec_t graphExecs[NUM_REQUESTS];
+    cudaGraph_t graph;
+
     
     const size_t bytes = N * sizeof(int);
     cudaStream_t streams[NUM_STREAMS];
@@ -79,13 +101,28 @@ int main(int argc, char *argv[]) {
     cudaEventCreate(&stop);
     printf("Launching kernels\n");
     cudaEventRecord(start);
-    for (int req = 0; req < NUM_REQUESTS; req++) {
-        for (int solved_block_size = 1; solved_block_size < N; solved_block_size *= 2) {
-            int threadsPerBlock = 256;
-            int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
-            unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, streams[req % NUM_STREAMS]>>>(d_arrays[req], N, solved_block_size);
+
+    if (IF_CUDA_GRAPH) {
+        for (int req = 0; req < NUM_REQUESTS; req++) {          
+            cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal);
+            solve(N, NULL, d_arrays[req]);
+            cudaStreamEndCapture(0, &graph);
+            cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0);
+            cudaGraphDestroy(graph); 
         }
-    }    
+    }
+
+    for (int iteration = 0; iteration < N_ITERATIONS; iteration++) {
+        for (int req = 0; req < NUM_REQUESTS; req++) {
+            if (IF_CUDA_GRAPH){
+                cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]);
+            } else {
+                solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req]);
+            }
+            
+        }
+    }
+    
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float kernelTime = 0;
@@ -111,6 +148,12 @@ int main(int argc, char *argv[]) {
 
     for (int iter = 0; iter < NUM_STREAMS; iter++){
         cudaStreamDestroy(streams[iter]);
+    }
+
+    if (IF_CUDA_GRAPH) {
+        for (int req = 0; req < NUM_REQUESTS; req++) {
+            cudaGraphExecDestroy(graphExecs[req]);
+        }
     }
 
     return 0;
