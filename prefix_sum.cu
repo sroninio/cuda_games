@@ -37,60 +37,66 @@ void verifyArray(int * arr, size_t n)
 
 int main() {
     const int N = 1000000000;
+    const int NUM_REQUESTS = 4;
+    const int NUM_STREAMS = 4;
     const size_t bytes = N * sizeof(int);
+    cudaStream_t streams[NUM_STREAMS];
 
-    int *h_array = (int*)malloc(bytes);
+    for (int iter = 0; iter < NUM_STREAMS; iter++){
+        cudaStreamCreate(&(streams[iter]));
+    }
 
-
+    int **h_arrays = (int**)malloc(NUM_REQUESTS * sizeof(int *));
+    int **d_arrays = (int**)malloc(NUM_REQUESTS * sizeof(int *)); 
     clock_t prepare_start = clock();
-    prepareArray(h_array, N);
+    for (int iter = 0; iter < NUM_REQUESTS; iter++){
+        h_arrays[iter] = (int*)malloc(bytes);
+        prepareArray(h_arrays[iter], N);
+        cudaMalloc(d_arrays + iter, bytes);
+        cudaMemcpy(d_arrays[iter], h_arrays[iter], bytes, cudaMemcpyHostToDevice);
+    }
     clock_t prepare_end = clock();
     double prepareTime = ((double)(prepare_end - prepare_start)) / CLOCKS_PER_SEC * 1000.0;
     printf("Prepare time: %.3f ms\n", prepareTime);
+    
 
-
-    int *d_array;
-    cudaMalloc(&d_array, bytes);
-    cudaMemcpy(d_array, h_array, bytes, cudaMemcpyHostToDevice);
-
-    // Create CUDA events for timing
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
-
     printf("Launching kernels\n");
-    
-    // Start timing the kernel loop
     cudaEventRecord(start);
-    for (int solved_block_size = 1; solved_block_size < N; solved_block_size *= 2) {
-        int threadsPerBlock = 256;
-        int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
-        unite_step_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_array, N, solved_block_size);
-        cudaDeviceSynchronize();
-    }
-    
-    // Stop timing the kernel loop
+    for (int req = 0; req < NUM_REQUESTS; req++) {
+        for (int solved_block_size = 1; solved_block_size < N; solved_block_size *= 2) {
+            int threadsPerBlock = 256;
+            int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
+            unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, streams[req % NUM_STREAMS]>>>(d_arrays[req], N, solved_block_size);
+        }
+    }    
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
-    
     float kernelTime = 0;
     cudaEventElapsedTime(&kernelTime, start, stop);
     printf("Finished kernels\n");
     printf("Kernel loop execution time: %.3f ms\n\n", kernelTime);
-
-    cudaMemcpy(h_array, d_array, bytes, cudaMemcpyDeviceToHost);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
     
-    // Time the verification
     clock_t verify_start = clock();
-    verifyArray(h_array, N);
+    for (int iter = 0; iter < NUM_REQUESTS; iter++){
+        cudaMemcpy(h_arrays[iter], d_arrays[iter], bytes, cudaMemcpyDeviceToHost);
+        verifyArray(h_arrays[iter], N); 
+        cudaFree(d_arrays[iter]);
+        free(h_arrays[iter]);
+    } 
+    free(h_arrays);  
+    free(d_arrays);
     clock_t verify_end = clock();
     double verifyTime = ((double)(verify_end - verify_start)) / CLOCKS_PER_SEC * 1000.0;
     printf("Verification time: %.3f ms\n", verifyTime);
-    
-    // Clean up CUDA events
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    cudaFree(d_array);
-    free(h_array);
+
+    for (int iter = 0; iter < NUM_STREAMS; iter++){
+        cudaStreamDestroy(streams[iter]);
+    }
+
     return 0;
 }
