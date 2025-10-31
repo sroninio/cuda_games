@@ -36,11 +36,18 @@ void verifyArray(int * arr, size_t n)
 }
 
 int main() {
-    const int N = 16;
+    const int N = 1000000000;
     const size_t bytes = N * sizeof(int);
 
     int *h_array = (int*)malloc(bytes);
+
+
+    clock_t prepare_start = clock();
     prepareArray(h_array, N);
+    clock_t prepare_end = clock();
+    double prepareTime = ((double)(prepare_end - prepare_start)) / CLOCKS_PER_SEC * 1000.0;
+    printf("Prepare time: %.3f ms\n", prepareTime);
+
 
     int *d_array;
     cudaMalloc(&d_array, bytes);
@@ -60,7 +67,6 @@ int main() {
         int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
         unite_step_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_array, N, solved_block_size);
         cudaDeviceSynchronize();
-        cudaMemcpy(h_array, d_array, bytes, cudaMemcpyDeviceToHost);
     }
     
     // Stop timing the kernel loop
