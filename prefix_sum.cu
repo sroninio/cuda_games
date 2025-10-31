@@ -122,6 +122,7 @@ int main(int argc, char *argv[]) {
             
         }
     }
+    cudaDeviceSynchronize();
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float kernelTime = 0;
