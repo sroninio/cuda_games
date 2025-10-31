@@ -101,7 +101,6 @@ int main(int argc, char *argv[]) {
     cudaEventCreate(&stop);
     printf("Launching kernels\n");
     cudaEventRecord(start);
-
     if (IF_CUDA_GRAPH) {
         for (int req = 0; req < NUM_REQUESTS; req++) {          
             cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal);
@@ -114,6 +113,7 @@ int main(int argc, char *argv[]) {
 
     for (int iteration = 0; iteration < N_ITERATIONS; iteration++) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
+            cudaStreamSynchronize(streams[req % NUM_STREAMS]);
             if (IF_CUDA_GRAPH){
                 cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]);
             } else {
@@ -122,7 +122,6 @@ int main(int argc, char *argv[]) {
             
         }
     }
-    
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float kernelTime = 0;
@@ -131,6 +130,7 @@ int main(int argc, char *argv[]) {
     printf("Kernel loop execution time: %.3f ms\n\n", kernelTime);
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
+
     
     clock_t verify_start = clock();
     for (int iter = 0; iter < NUM_REQUESTS; iter++){
@@ -142,19 +142,15 @@ int main(int argc, char *argv[]) {
     clock_t verify_end = clock();
     double verifyTime = ((double)(verify_end - verify_start)) / CLOCKS_PER_SEC * 1000.0;
     printf("Verification time: %.3f ms\n", verifyTime);
-    
     free(h_arrays);  
     free(d_arrays);
-
     for (int iter = 0; iter < NUM_STREAMS; iter++){
         cudaStreamDestroy(streams[iter]);
     }
-
     if (IF_CUDA_GRAPH) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
             cudaGraphExecDestroy(graphExecs[req]);
         }
     }
-
     return 0;
 }
