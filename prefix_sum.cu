@@ -121,19 +121,12 @@ int main(int argc, char *argv[]) {
         CUDA_CHECK(cudaStreamCreate(&captureStream));
         printf("Creating CUDA graphs...\n");
         for (int req = 0; req < NUM_REQUESTS; req++) {
-            printf("  Capturing graph for request %d\n", req);
-            
             // Capture THE SAME STREAM that kernels will launch on
             CUDA_CHECK(cudaStreamBeginCapture(captureStream, cudaStreamCaptureModeGlobal));
             solve(N, &captureStream, d_arrays[req]);  // Must use captureStream here!
             // Don't check errors during capture!
-            
             CUDA_CHECK(cudaStreamEndCapture(captureStream, &graph));
-            printf("  Graph captured, instantiating...\n");
-            
             CUDA_CHECK(cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0));
-            printf("  Graph %d instantiated successfully\n", req);
-            
             CUDA_CHECK(cudaGraphDestroy(graph));
         }
         CUDA_CHECK(cudaStreamDestroy(captureStream));
@@ -145,22 +138,24 @@ int main(int argc, char *argv[]) {
     
     for (int iteration = 0; iteration < N_ITERATIONS; iteration++) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
-            cudaStreamSynchronize(streams[req % NUM_STREAMS]);
             if (IF_CUDA_GRAPH){
-                printf("Launching graph %d on stream %d\n", req, req % NUM_STREAMS);
+                cudaMemcpy(temp_debug, d_arrays[req], 8 * sizeof(int), cudaMemcpyDeviceToHost);
+                printf("BEFORE Iteration %d, Request 0: [%d, %d, %d, %d, %d, %d, %d, %d]\n", 
+                            iteration, temp_debug[0], temp_debug[1], temp_debug[2], temp_debug[3],
+                            temp_debug[4], temp_debug[5], temp_debug[6], temp_debug[7]);
                 CUDA_CHECK(cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]));
+                cudaStreamSynchronize(streams[req % NUM_STREAMS]);
+                cudaMemcpy(temp_debug, d_arrays[req], 8 * sizeof(int), cudaMemcpyDeviceToHost);
+                printf("AFTER Iteration %d, Request 0: [%d, %d, %d, %d, %d, %d, %d, %d]\n", 
+                    iteration, temp_debug[0], temp_debug[1], temp_debug[2], temp_debug[3],
+                    temp_debug[4], temp_debug[5], temp_debug[6], temp_debug[7]);
+                
             } else {
                 solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req]);
             }
             
         }
         cudaDeviceSynchronize();
-        
-        // Print first 8 elements of first array for debugging
-        cudaMemcpy(temp_debug, d_arrays[0], 8 * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("Iteration %d, Request 0: [%d, %d, %d, %d, %d, %d, %d, %d]\n", 
-               iteration, temp_debug[0], temp_debug[1], temp_debug[2], temp_debug[3],
-               temp_debug[4], temp_debug[5], temp_debug[6], temp_debug[7]);
     }
     
     free(temp_debug);
