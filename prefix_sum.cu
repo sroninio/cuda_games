@@ -117,12 +117,14 @@ int main(int argc, char *argv[]) {
     printf("Launching kernels\n");
     cudaEventRecord(start);
     if (IF_CUDA_GRAPH) {
+        cudaStream_t dummy_stream; 
+        cudaStreamCreate(&dummy_stream);
         printf("Creating CUDA graphs...\n");
         for (int req = 0; req < NUM_REQUESTS; req++) {
             printf("  Capturing graph for request %d\n", req);
             
             CUDA_CHECK(cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal));
-            solve(N, NULL, d_arrays[req]);
+            solve(N, &dummy_stream, d_arrays[req]);
             // Don't check errors during capture!
             
             CUDA_CHECK(cudaStreamEndCapture(0, &graph));
