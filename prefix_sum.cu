@@ -41,9 +41,9 @@ void verifyArray(int * arr, size_t n)
         if (arr[i] != sum) {is_good = false; break;}
     }
     if (is_good) {
-        //printf("✓ Test PASSED!\n");
+        printf("✓ Test PASSED!\n");
     } else {
-        //printf("✗ Test FAILED!\n");
+        printf("✗ Test FAILED!\n");
     }
 }
 
@@ -52,11 +52,7 @@ void solve(int N, cudaStream_t * pstream, int * d_array)
     for (int solved_block_size = 1; solved_block_size < N; solved_block_size *= 2) {
         int threadsPerBlock = 256;
         int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
-        if (pstream) {
-            unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, *pstream>>>(d_array, N, solved_block_size);
-        } else {
-            unite_step_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_array, N, solved_block_size); 
-        }
+        unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, *pstream>>>(d_array, N, solved_block_size);
     }    
 }
 
@@ -83,28 +79,23 @@ int main(int argc, char *argv[]) {
         N, NUM_REQUESTS, NUM_STREAMS, IF_CUDA_GRAPH, N_ITERATIONS);
     
     cudaGraphExec_t graphExecs[NUM_REQUESTS];
-    // Initialize to NULL
     for (int i = 0; i < NUM_REQUESTS; i++) {
         graphExecs[i] = NULL;
     }
     cudaGraph_t graph;
-
-    
     const size_t bytes = N * sizeof(int);
     cudaStream_t streams[NUM_STREAMS];
-
     for (int iter = 0; iter < NUM_STREAMS; iter++){
-        cudaStreamCreate(&(streams[iter]));
+        CUDA_CHECK(cudaStreamCreate(&(streams[iter])));
     }
-
     int **h_arrays = (int**)malloc(NUM_REQUESTS * sizeof(int *));
     int **d_arrays = (int**)malloc(NUM_REQUESTS * sizeof(int *)); 
     clock_t prepare_start = clock();
     for (int iter = 0; iter < NUM_REQUESTS; iter++){
         h_arrays[iter] = (int*)malloc(bytes);
         prepareArray(h_arrays[iter], N);
-        cudaMalloc(d_arrays + iter, bytes);
-        cudaMemcpy(d_arrays[iter], h_arrays[iter], bytes, cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMalloc(d_arrays + iter, bytes));
+        CUDA_CHECK(cudaMemcpy(d_arrays[iter], h_arrays[iter], bytes, cudaMemcpyHostToDevice));
     }
     clock_t prepare_end = clock();
     double prepareTime = ((double)(prepare_end - prepare_start)) / CLOCKS_PER_SEC * 1000.0;
@@ -127,12 +118,12 @@ int main(int argc, char *argv[]) {
     }
 
     
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaDeviceSynchronize());
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
     printf("Launching kernels\n");
-    cudaEventRecord(start);
+    CUDA_CHECK(cudaEventRecord(start));
     for (int iteration = 0; iteration < N_ITERATIONS; iteration++) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
             if (IF_CUDA_GRAPH){
@@ -140,38 +131,44 @@ int main(int argc, char *argv[]) {
                 
             } else {
                 solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req]);
+                CUDA_CHECK(cudaGetLastError());  // Check for kernel launch errors
             }
         }
-        cudaDeviceSynchronize();
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
     float kernelTime = 0;
-    cudaEventElapsedTime(&kernelTime, start, stop);
+    CUDA_CHECK(cudaEventElapsedTime(&kernelTime, start, stop));
     printf("Finished kernels\n");
     printf("Kernel loop execution time: %.3f ms\n\n", kernelTime);
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
 
-    
-    clock_t verify_start = clock();
-    for (int iter = 0; iter < NUM_REQUESTS; iter++){
-        cudaMemcpy(h_arrays[iter], d_arrays[iter], bytes, cudaMemcpyDeviceToHost);
-        verifyArray(h_arrays[iter], N); 
-        cudaFree(d_arrays[iter]);
-        free(h_arrays[iter]);
+   if (N_ITERATIONS == 1){
+        clock_t verify_start = clock();
+        for (int iter = 0; iter < NUM_REQUESTS; iter++){
+            CUDA_CHECK(cudaMemcpy(h_arrays[iter], d_arrays[iter], bytes, cudaMemcpyDeviceToHost));
+            verifyArray(h_arrays[iter], N); 
+        } 
+        clock_t verify_end = clock();
+        double verifyTime = ((double)(verify_end - verify_start)) / CLOCKS_PER_SEC * 1000.0;
+        printf("Verification time: %.3f ms\n", verifyTime);
     } 
-    clock_t verify_end = clock();
-    double verifyTime = ((double)(verify_end - verify_start)) / CLOCKS_PER_SEC * 1000.0;
-    printf("Verification time: %.3f ms\n", verifyTime);
+
+
+    for (int iter = 0; iter < NUM_REQUESTS; iter++){
+        CUDA_CHECK(cudaFree(d_arrays[iter]));
+        free(h_arrays[iter]);
+    }  
     free(h_arrays);  
     free(d_arrays);
     for (int iter = 0; iter < NUM_STREAMS; iter++){
-        cudaStreamDestroy(streams[iter]);
+        CUDA_CHECK(cudaStreamDestroy(streams[iter]));
     }
     if (IF_CUDA_GRAPH) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
-            cudaGraphExecDestroy(graphExecs[req]);
+            CUDA_CHECK(cudaGraphExecDestroy(graphExecs[req]));
         }
     }
     return 0;
