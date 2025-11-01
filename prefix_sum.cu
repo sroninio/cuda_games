@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
             
             CUDA_CHECK(cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal));
             solve(N, NULL, d_arrays[req]);
-            CUDA_CHECK(cudaGetLastError());  // Check for kernel launch errors
+            // Don't check errors during capture!
             
             CUDA_CHECK(cudaStreamEndCapture(0, &graph));
             printf("  Graph captured, instantiating...\n");
