@@ -117,17 +117,18 @@ int main(int argc, char *argv[]) {
     printf("Launching kernels\n");
     cudaEventRecord(start);
     if (IF_CUDA_GRAPH) {
-        cudaStream_t dummy_stream; 
-        cudaStreamCreate(&dummy_stream);
+        cudaStream_t captureStream; 
+        CUDA_CHECK(cudaStreamCreate(&captureStream));
         printf("Creating CUDA graphs...\n");
         for (int req = 0; req < NUM_REQUESTS; req++) {
             printf("  Capturing graph for request %d\n", req);
             
-            CUDA_CHECK(cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal));
-            solve(N, &dummy_stream, d_arrays[req]);
+            // Capture THE SAME STREAM that kernels will launch on
+            CUDA_CHECK(cudaStreamBeginCapture(captureStream, cudaStreamCaptureModeGlobal));
+            solve(N, &captureStream, d_arrays[req]);  // Must use captureStream here!
             // Don't check errors during capture!
             
-            CUDA_CHECK(cudaStreamEndCapture(0, &graph));
+            CUDA_CHECK(cudaStreamEndCapture(captureStream, &graph));
             printf("  Graph captured, instantiating...\n");
             
             CUDA_CHECK(cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0));
@@ -135,6 +136,7 @@ int main(int argc, char *argv[]) {
             
             CUDA_CHECK(cudaGraphDestroy(graph));
         }
+        CUDA_CHECK(cudaStreamDestroy(captureStream));
         printf("All graphs created successfully\n");
     }
 
