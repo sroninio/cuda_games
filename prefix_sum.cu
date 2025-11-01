@@ -41,9 +41,9 @@ void verifyArray(int * arr, size_t n)
         if (arr[i] != sum) {is_good = false; break;}
     }
     if (is_good) {
-        printf("✓ Test PASSED!\n");
+        //printf("✓ Test PASSED!\n");
     } else {
-        printf("✗ Test FAILED!\n");
+        //printf("✗ Test FAILED!\n");
     }
 }
 
@@ -111,20 +111,13 @@ int main(int argc, char *argv[]) {
     printf("Prepare time: %.3f ms\n", prepareTime);
     
 
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    printf("Launching kernels\n");
-    cudaEventRecord(start);
     if (IF_CUDA_GRAPH) {
         cudaStream_t captureStream; 
         CUDA_CHECK(cudaStreamCreate(&captureStream));
         printf("Creating CUDA graphs...\n");
         for (int req = 0; req < NUM_REQUESTS; req++) {
-            // Capture THE SAME STREAM that kernels will launch on
             CUDA_CHECK(cudaStreamBeginCapture(captureStream, cudaStreamCaptureModeGlobal));
             solve(N, &captureStream, d_arrays[req]);  // Must use captureStream here!
-            // Don't check errors during capture!
             CUDA_CHECK(cudaStreamEndCapture(captureStream, &graph));
             CUDA_CHECK(cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0));
             CUDA_CHECK(cudaGraphDestroy(graph));
@@ -133,33 +126,24 @@ int main(int argc, char *argv[]) {
         printf("All graphs created successfully\n");
     }
 
-    // Temporary buffer for debugging
-    int *temp_debug = (int*)malloc(8 * sizeof(int));
     
+    cudaDeviceSynchronize();
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    printf("Launching kernels\n");
+    cudaEventRecord(start);
     for (int iteration = 0; iteration < N_ITERATIONS; iteration++) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
             if (IF_CUDA_GRAPH){
-                cudaMemcpy(temp_debug, d_arrays[req], 8 * sizeof(int), cudaMemcpyDeviceToHost);
-                printf("BEFORE Iteration %d, Request 0: [%d, %d, %d, %d, %d, %d, %d, %d]\n", 
-                            iteration, temp_debug[0], temp_debug[1], temp_debug[2], temp_debug[3],
-                            temp_debug[4], temp_debug[5], temp_debug[6], temp_debug[7]);
                 CUDA_CHECK(cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]));
-                cudaStreamSynchronize(streams[req % NUM_STREAMS]);
-                cudaMemcpy(temp_debug, d_arrays[req], 8 * sizeof(int), cudaMemcpyDeviceToHost);
-                printf("AFTER Iteration %d, Request 0: [%d, %d, %d, %d, %d, %d, %d, %d]\n", 
-                    iteration, temp_debug[0], temp_debug[1], temp_debug[2], temp_debug[3],
-                    temp_debug[4], temp_debug[5], temp_debug[6], temp_debug[7]);
                 
             } else {
                 solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req]);
             }
-            
         }
         cudaDeviceSynchronize();
     }
-    
-    free(temp_debug);
-    cudaDeviceSynchronize();
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float kernelTime = 0;
