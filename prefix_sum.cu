@@ -105,12 +105,16 @@ int main(int argc, char *argv[]) {
         for (int req = 0; req < NUM_REQUESTS; req++) {          
             cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal);
             solve(N, NULL, d_arrays[req]);
+            
             cudaStreamEndCapture(0, &graph);
             cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0);
             cudaGraphDestroy(graph); 
         }
     }
 
+    // Temporary buffer for debugging
+    int *temp_debug = (int*)malloc(8 * sizeof(int));
+    
     for (int iteration = 0; iteration < N_ITERATIONS; iteration++) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
             cudaStreamSynchronize(streams[req % NUM_STREAMS]);
@@ -121,7 +125,16 @@ int main(int argc, char *argv[]) {
             }
             
         }
+        cudaDeviceSynchronize();
+        
+        // Print first 8 elements of first array for debugging
+        cudaMemcpy(temp_debug, d_arrays[0], 8 * sizeof(int), cudaMemcpyDeviceToHost);
+        printf("Iteration %d, Request 0: [%d, %d, %d, %d, %d, %d, %d, %d]\n", 
+               iteration, temp_debug[0], temp_debug[1], temp_debug[2], temp_debug[3],
+               temp_debug[4], temp_debug[5], temp_debug[6], temp_debug[7]);
     }
+    
+    free(temp_debug);
     cudaDeviceSynchronize();
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
