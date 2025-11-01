@@ -3,6 +3,17 @@
 #include <cuda_runtime.h>
 #include <time.h>
 
+// CUDA error checking macro
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            fprintf(stderr, "CUDA Error at %s:%d - %s\n", __FILE__, __LINE__, \
+                    cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE); \
+        } \
+    } while(0)
+
 // CUDA kernel that adds 1 to each element
 __global__ void unite_step_kernel(int *d_array, int n, int solved_block_size) {
     int t_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -72,6 +83,10 @@ int main(int argc, char *argv[]) {
         N, NUM_REQUESTS, NUM_STREAMS, IF_CUDA_GRAPH, N_ITERATIONS);
     
     cudaGraphExec_t graphExecs[NUM_REQUESTS];
+    // Initialize to NULL
+    for (int i = 0; i < NUM_REQUESTS; i++) {
+        graphExecs[i] = NULL;
+    }
     cudaGraph_t graph;
 
     
@@ -102,14 +117,23 @@ int main(int argc, char *argv[]) {
     printf("Launching kernels\n");
     cudaEventRecord(start);
     if (IF_CUDA_GRAPH) {
-        for (int req = 0; req < NUM_REQUESTS; req++) {          
-            cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal);
-            solve(N, NULL, d_arrays[req]);
+        printf("Creating CUDA graphs...\n");
+        for (int req = 0; req < NUM_REQUESTS; req++) {
+            printf("  Capturing graph for request %d\n", req);
             
-            cudaStreamEndCapture(0, &graph);
-            cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0);
-            cudaGraphDestroy(graph); 
+            CUDA_CHECK(cudaStreamBeginCapture(0, cudaStreamCaptureModeGlobal));
+            solve(N, NULL, d_arrays[req]);
+            CUDA_CHECK(cudaGetLastError());  // Check for kernel launch errors
+            
+            CUDA_CHECK(cudaStreamEndCapture(0, &graph));
+            printf("  Graph captured, instantiating...\n");
+            
+            CUDA_CHECK(cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0));
+            printf("  Graph %d instantiated successfully\n", req);
+            
+            CUDA_CHECK(cudaGraphDestroy(graph));
         }
+        printf("All graphs created successfully\n");
     }
 
     // Temporary buffer for debugging
@@ -119,7 +143,8 @@ int main(int argc, char *argv[]) {
         for (int req = 0; req < NUM_REQUESTS; req++) {
             cudaStreamSynchronize(streams[req % NUM_STREAMS]);
             if (IF_CUDA_GRAPH){
-                cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]);
+                printf("Launching graph %d on stream %d\n", req, req % NUM_STREAMS);
+                CUDA_CHECK(cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]));
             } else {
                 solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req]);
             }
