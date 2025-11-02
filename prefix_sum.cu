@@ -15,13 +15,18 @@
     } while(0)
 
 // CUDA kernel that adds 1 to each element
-__global__ void unite_step_kernel(int *d_array, int n, int solved_block_size) {
+__global__ void unite_step_kernel(int *d_array, int n, int solved_block_size, bool single_step) {
     int t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int base_indx = (t_idx / solved_block_size) * (2 * solved_block_size);
-    int pusher_indx = base_indx + solved_block_size - 1;
-    int pushed_indx = base_indx + solved_block_size + t_idx % solved_block_size;
-    if (pushed_indx < n) {
-        d_array[pushed_indx] += d_array[pusher_indx];
+    while (solved_block_size < n) {
+        int base_indx = (t_idx / solved_block_size) * (2 * solved_block_size);
+        int pusher_indx = base_indx + solved_block_size - 1;
+        int pushed_indx = base_indx + solved_block_size + t_idx % solved_block_size;
+        if (pushed_indx < n) {
+            d_array[pushed_indx] += d_array[pusher_indx];
+        }
+        if (single_step) {break;}
+        solved_block_size *= 2;
+        __syncthreads();
     }
 }
 
@@ -47,24 +52,26 @@ void verifyArray(int * arr, size_t n)
     }
 }
 
-void solve(int N, cudaStream_t * pstream, int * d_array)
+void solve(int N, cudaStream_t * pstream, int * d_array, bool single_step)
 {
     for (int solved_block_size = 1; solved_block_size < N; solved_block_size *= 2) {
         int threadsPerBlock = 256;
         int blocksPerGrid = ((N/2 + 1) + threadsPerBlock - 1) / threadsPerBlock;
-        unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, *pstream>>>(d_array, N, solved_block_size);
+        unite_step_kernel<<<blocksPerGrid, threadsPerBlock, 0, *pstream>>>(d_array, N, solved_block_size, single_step);
+        if (!single_step) {break;}
     }    
 }
 
 int main(int argc, char *argv[]) {
     // Check command-line arguments
-    if (argc != 6) {
-        printf("Usage: %s <N> <NUM_REQUESTS> <NUM_STREAMS> <IF_CUDA_GRAPH> <N_ITERATIONS>\n", argv[0]);
+    if (argc != 7) {
+        printf("Usage: %s <N> <NUM_REQUESTS> <NUM_STREAMS> <IF_CUDA_GRAPH> <N_ITERATIONS> <SINGLE_STEP>\n", argv[0]);
         printf("  N             - Array size\n");
         printf("  NUM_REQUESTS  - Number of arrays to process\n");
         printf("  NUM_STREAMS   - Number of CUDA streams\n");
         printf("  IF_CUDA_GRAPH - Use CUDA graphs (0=no, 1=yes)\n");
         printf("  N_ITERATIONS  - Number of times to repeat the kernel execution\n");
+        printf("  SINGLE_STEP   - Run single step only (0=all steps, 1=single step)\n");
         return 1;
     }
     
@@ -74,9 +81,10 @@ int main(int argc, char *argv[]) {
     const int NUM_STREAMS = atoi(argv[3]);
     const int IF_CUDA_GRAPH = atoi(argv[4]);
     const int N_ITERATIONS = atoi(argv[5]);
+    const int SINGLE_STEP = atoi(argv[6]);
 
-    printf("Running with N=%d, NUM_REQUESTS=%d, NUM_STREAMS=%d, IF_CUDA_GRAPH=%d, N_ITERATIONS=%d\n\n", 
-        N, NUM_REQUESTS, NUM_STREAMS, IF_CUDA_GRAPH, N_ITERATIONS);
+    printf("Running with N=%d, NUM_REQUESTS=%d, NUM_STREAMS=%d, IF_CUDA_GRAPH=%d, N_ITERATIONS=%d, SINGLE_STEP=%d\n\n", 
+        N, NUM_REQUESTS, NUM_STREAMS, IF_CUDA_GRAPH, N_ITERATIONS, SINGLE_STEP);
     
     cudaGraphExec_t graphExecs[NUM_REQUESTS];
     for (int i = 0; i < NUM_REQUESTS; i++) {
@@ -108,7 +116,7 @@ int main(int argc, char *argv[]) {
         printf("Creating CUDA graphs...\n");
         for (int req = 0; req < NUM_REQUESTS; req++) {
             CUDA_CHECK(cudaStreamBeginCapture(captureStream, cudaStreamCaptureModeGlobal));
-            solve(N, &captureStream, d_arrays[req]);  // Must use captureStream here!
+            solve(N, &captureStream, d_arrays[req], SINGLE_STEP);  // Must use captureStream here!
             CUDA_CHECK(cudaStreamEndCapture(captureStream, &graph));
             CUDA_CHECK(cudaGraphInstantiate(&(graphExecs[req]), graph, NULL, NULL, 0));
             CUDA_CHECK(cudaGraphDestroy(graph));
@@ -130,7 +138,7 @@ int main(int argc, char *argv[]) {
                 CUDA_CHECK(cudaGraphLaunch(graphExecs[req], streams[req % NUM_STREAMS]));
                 
             } else {
-                solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req]);
+                solve(N, &(streams[req % NUM_STREAMS]), d_arrays[req], SINGLE_STEP);
                 CUDA_CHECK(cudaGetLastError());  // Check for kernel launch errors
             }
         }
