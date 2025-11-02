@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 #include <time.h>
+#include <iostream>
+
 
 // CUDA error checking macro
 #define CUDA_CHECK(call) \
@@ -46,9 +48,9 @@ void verifyArray(int * arr, size_t n)
         if (arr[i] != sum) {is_good = false; break;}
     }
     if (is_good) {
-        printf("✓ Test PASSED!\n");
+        //printf("✓ Test PASSED!\n");
     } else {
-        printf("✗ Test FAILED!\n");
+        //printf("✗ Test FAILED!\n");
     }
 }
 
@@ -63,6 +65,34 @@ void solve(int N, cudaStream_t * pstream, int * d_array, bool single_step)
 }
 
 int main(int argc, char *argv[]) {
+
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);  // get properties for device 0
+
+	    printf("GPU: %s\n", prop.name);
+	    printf("Compute Capability: %d.%d\n\n", prop.major, prop.minor);
+	    
+	    printf("Shared Memory Limits:\n");
+	    printf("  Per SM:    %zu bytes (%ld KB)\n", 
+		   prop.sharedMemPerMultiprocessor,
+		   prop.sharedMemPerMultiprocessor / 1024);
+	    printf("  Per Block: %zu bytes (%ld KB)\n",
+		   prop.sharedMemPerBlock,
+		   prop.sharedMemPerBlock / 1024);
+	    
+	    printf("\nNumber of SMs: %d\n", prop.multiProcessorCount);
+	    printf("Total shared memory (all SMs): %ld KB\n",
+		   (prop.sharedMemPerMultiprocessor * prop.multiProcessorCount) / 1024);
+
+
+    std::cout << "Compute capability: " << prop.major << "." << prop.minor << std::endl;
+    if (prop.major >= 8) {
+        std::cout << "Supports asm-level cp.async and cuda::memcpy_async!" << std::endl;
+    } else {
+        std::cout << "Does not support device-side async global-to-shared copies." << std::endl;
+    }
+
     // Check command-line arguments
     if (argc != 7) {
         printf("Usage: %s <N> <NUM_REQUESTS> <NUM_STREAMS> <IF_CUDA_GRAPH> <N_ITERATIONS> <SINGLE_STEP>\n", argv[0]);
